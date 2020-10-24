@@ -1,5 +1,5 @@
-#define ARM_CYCLE_COUNT (*(uint32_t*)0xE0001004)
-#define SIXTY_FOUR_MICROSECONDS 15360
+volatile uint32_t& ARM_CYCLE_COUNT = *((uint32_t*)0xE0001004);
+constexpr int SIXTY_FOUR_MICROSECONDS = 15360;
 
 /*
  * Interrupt Service Routine for reading data
@@ -8,6 +8,7 @@
  * We read the Bytes being sent, we gather the requested data, and then we send the data back out
  */
 void dataISR();
+
 /*
  * A Low-Bit is 3 microsecond low followed by a 1 microsecond high
  * A High-Bit is 1 microsecond low followed by  a 3 microsecond high
@@ -20,7 +21,6 @@ void setup() {
   Serial.begin(3600);
   pinMode(2, INPUT_PULLUP);
   attachInterrupt(digitalPinToInterrupt(2), dataISR, FALLING);
-
 }
 
 void loop() {

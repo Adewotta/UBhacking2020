@@ -50,9 +50,8 @@ void setup() {
 void loop() {
   if (polled) {
     polled = false;
-
-    Serial.write(0);
-    Serial.readBytes(sendBuffer, 8);
+    Serial.write((uint8_t)0);
+    Serial.readBytes((char*)sendBuffer, 8);
   }
 }
 

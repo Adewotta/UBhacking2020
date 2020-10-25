@@ -1,6 +1,7 @@
-volatile uint32_t& ARM_CYCLE_COUNT = *((uint32_t*)0xE0001004);
+#define ARM_CYCLE_COUNT (*(uint32_t*)0xE0001004)
 constexpr int SIXTY_FOUR_MICROSECONDS = 15360;
 
+uint8_t sendBuffer[10];
 /*
  * Interrupt Service Routine for reading data
  * When the voltage falls, it indicated that a message is being sent
@@ -10,66 +11,108 @@ constexpr int SIXTY_FOUR_MICROSECONDS = 15360;
 void dataISR();
 
 /*
+ * The Below applies to readData and sendData
  * A Low-Bit is 3 microsecond low followed by a 1 microsecond high
  * A High-Bit is 1 microsecond low followed by  a 3 microsecond high
  * A Stop-Bit is the same as a High-Bit
  * Documentation for what the bytes mean can be found here https://simplecontrollers.bigcartel.com/gamecube-protocol
  */
-uint32_t readData();
+ int readData();
+ //give a pointer to an array as well as how many bytes to send
+ int sendData(uint8_t* sendingBuffer, uint8_t bytesToSend);
 
 void setup() {
-  Serial.begin(3600);
-  pinMode(2, INPUT_PULLUP);
-  attachInterrupt(digitalPinToInterrupt(2), dataISR, FALLING);
+  Serial.begin(9600);
+  pinMode(8, INPUT_PULLUP);
+  attachInterrupt(digitalPinToInterrupt(8), dataISR, FALLING);
 }
 
 void loop() {
-
 }
 
 void dataISR() {
   noInterrupts();
-  //READ DATA
-  //GET VALUES
-  //SEND DATA
+  
+    int requestID = readData();
+   //Wait a few microseconds until the stop bit finishes and the voltage settles
+   for(int x = 0; x < 240; x++) {__asm__("NOP");}
+   switch (requestID) {
+    case 0: 
+      break;
+    case 1:
+      break;
+    case 2:
+      break;
+    case 3:
+      break;    
+    }
   interrupts();
+  Serial.printf("\n%x",requestID);
   return;
 }
 
-uint32_t readData() {
+int readData() {
   ARM_CYCLE_COUNT = 0;
+  int BitsRead = 0;
   uint32_t ReadingBuffer = 0;
-  uint32_t BitsRead = 0;
-  //No read should take longer than 64 microseconds, so if we go past this we should just exit the loop
+  //We have to use some less clear syntax to read the value faster
   while (ARM_CYCLE_COUNT < SIXTY_FOUR_MICROSECONDS) {
-    //While Low just waste cycles and wait
-    while (digitalRead(2) == LOW) {
-      //putting the ASM NOP prevent the loop from being optimized out or messed with by the compiler
-      __asm__("NOP");
-    }
-    //Get Time the voltage was low, reset the cycles counter, and then increment the BitsRead counter
-    uint32_t TimeSpentLow = ARM_CYCLE_COUNT;
-    ARM_CYCLE_COUNT = 0;
-    BitsRead += 1;
-    //If less than 2 microseconds or 240 cycles, then add 1 to the reading buffer
-    if (TimeSpentLow < 240) ReadingBuffer += 1;
-    if (BitsRead % 8 == 0) {
+    //Wait for the pin 8to drop in voltage
+    while((REG_PORT_IN0 & PORT_PA21)>>21==1){__asm__("NOP");}
+    uint32_t startCounter = ARM_CYCLE_COUNT;
+    //While pin 8 is low
+    while((REG_PORT_IN0 & PORT_PA21)>>21==0){__asm__("NOP");}
+    
+    if(ARM_CYCLE_COUNT-startCounter < 240)ReadingBuffer+=1;
+    if (BitsRead++ % 8 == 0) {
       switch (ReadingBuffer) {
-      case 0x00: //Console Probe
-        return 0;
-      case 0x41: //Origin Probe
-        return 1;
-      case 0x400300: //Poll request without rumble
-        return 2;
-      case 0x400301: //Poll request with rumble
-        return 3;
-      default:
-        break;
+        case 0x00: //Console Probe
+          return 0;
+        case 0x41: //Origin Probe
+          return 1;
+        case 0x400300: //Poll request without rumble
+          return 2;
+        case 0x400301: //Poll request with rumble
+          return 3;
+        default:
+          break;
       }
-      //If we have not gotten a byte match, then shift the bit to the left once to make way for the next bit
-      ReadingBuffer << 1;
     }
+    ReadingBuffer<<=1;
   }
   //It should never return 255 unless a reading error occured
-  return 255;
+  return 0xfe;
+}
+
+int writeData() {
+  ARM_CYCLE_COUNT = 0;
+  int BitsRead = 0;
+  uint32_t ReadingBuffer = 0;
+  //We have to use some less clear syntax to read the value faster
+  while (ARM_CYCLE_COUNT < SIXTY_FOUR_MICROSECONDS) {
+    //Wait for the pin 8to drop in voltage
+    while((REG_PORT_IN0 & PORT_PA21)>>21==1){__asm__("NOP");}
+    uint32_t startCounter = ARM_CYCLE_COUNT;
+    //While pin 8 is low
+    while((REG_PORT_IN0 & PORT_PA21)>>21==0){__asm__("NOP");}
+    
+    if(ARM_CYCLE_COUNT-startCounter < 240)ReadingBuffer+=1;
+    if (BitsRead++ % 8 == 0) {
+      switch (ReadingBuffer) {
+        case 0x00: //Console Probe
+          return 0;
+        case 0x41: //Origin Probe
+          return 1;
+        case 0x400300: //Poll request without rumble
+          return 2;
+        case 0x400301: //Poll request with rumble
+          return 3;
+        default:
+          break;
+      }
+    }
+    ReadingBuffer<<=1;
+  }
+  //It should never return 255 unless a reading error occured
+  return 0xfe;
 }

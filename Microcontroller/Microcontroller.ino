@@ -1,5 +1,11 @@
-#define ARM_CYCLE_COUNT (*(uint32_t*)0xE0001004)
-constexpr int SIXTY_FOUR_MICROSECONDS = 15360;
+volatile uint32_t& ARM_CYCLE_COUNT = *((uint32_t*)0xE0001004);
+
+/*
+   Here, we alternate between two buffers for controller data.
+   On a successful read from serial, we swap the temporary buffer we read into
+   with the one that the interrupt reads from. This ensures that an interrupt
+   doesn't read from a buffer that's currently being written to.
+*/
 
 volatile uint8_t sendBuffer1[10] = { 0, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0, 0 };
 volatile uint8_t sendBuffer2[10] = { 0, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0, 0 };
@@ -14,14 +20,33 @@ void swapSendBuffers()
   tempSendBuffer = oldReady;
 }
 
-uint8_t probeResponse[3] = { 0x09, 0x00, 0x03};
+// This is the data that we'll always send in response to a probe.
+const uint8_t probeResponse[3] = { 0x09, 0x00, 0x03 };
+
+/*
+   This variable is set to true when an interrupt responds to a poll or probe.
+   The serial reader uses this so that it doesn't read multiple controller
+   states between probes/polls. After the serial reader finishes reading, it
+   sets this back to false.
+*/
 volatile bool polled = false;
 
+enum GamecubeCommand : uint32_t
+{
+  CONSOLE_PROBE = 0x00,
+  ORIGIN_PROBE = 0x41,
+  POLL_NO_RUMBLE = 0x400300,
+  POLL_WITH_RUMBLE = 0x400301,
+  ERROR = 0x01
+};
+
+// These are the valid commands that can be sent to the PC over serial.
 enum SerialCommand : uint8_t
 {
   DATA_REQUEST = 1,
   LOG = 2
 };
+
 /*
    Interrupt Service Routine for reading data
    When the voltage falls, it indicated that a message is being sent
@@ -42,7 +67,7 @@ void dataISR();
 /*
    Read data coming in from the console to the controller
 */
-int readData();
+GamecubeCommand gamecubeReadCommand();
 
 
 /*
@@ -50,13 +75,13 @@ int readData();
    It uses the same communication standard as the one above
    120 cycles is 1 microsecond
 */
-void sendBit(uint8_t output);
+void gamecubeSendBit(uint8_t output);
 
 
 /*
    Send the data in an array to the console
 */
-void sendData(volatile uint8_t* sendingBuffer, uint8_t bytesToSend);
+void gamecubeSendData(volatile const uint8_t* sendingBuffer, uint8_t bytesToSend);
 
 template <typename T>
 void serialLog(T value)
@@ -113,34 +138,35 @@ void loop() {
 void dataISR() {
   noInterrupts();
 
-  int requestID = readData();
+  GamecubeCommand command = gamecubeReadCommand();
   //Wait a few microseconds until the stop bit finishes and the voltage settles
   for (int x = 0; x < 400; x++) {
     __asm__("NOP");
   }
   polled = true;
-  switch (requestID) {
-    case 0:
-      sendData(probeResponse, 3);
+  switch (command) {
+    case GamecubeCommand::CONSOLE_PROBE:
+      gamecubeSendData(probeResponse, 3);
       break;
-    case 1:
-      sendData(readySendBuffer, 10);
+    case GamecubeCommand::ORIGIN_PROBE:
+      gamecubeSendData(readySendBuffer, 10);
       break;
-    case 2:
-      sendData(readySendBuffer, 8);
+    case GamecubeCommand::POLL_NO_RUMBLE:
+      gamecubeSendData(readySendBuffer, 8);
       break;
-    case 3:
-      sendData(readySendBuffer, 8);
+    case GamecubeCommand::POLL_WITH_RUMBLE:
+      gamecubeSendData(readySendBuffer, 8);
       break;
   }
   interrupts();
   return;
 }
 
-int readData() {
+GamecubeCommand gamecubeReadCommand() {
   ARM_CYCLE_COUNT = 0;
   int BitsRead = 0;
   uint32_t ReadingBuffer = 0;
+  constexpr int SIXTY_FOUR_MICROSECONDS = 15360;
   //We have to use some less clear syntax to read the value faster
   while (ARM_CYCLE_COUNT < SIXTY_FOUR_MICROSECONDS) {
     //Wait for the pin 8to drop in voltage
@@ -156,26 +182,24 @@ int readData() {
     BitsRead++;
     if (BitsRead % 8 == 0) {
       switch (ReadingBuffer) {
-        case 0x00: //Console Probe
-          return 0;
-        case 0x41: //Origin Probe
-          return 1;
-        case 0x400300: //Poll request without rumble
-          return 2;
-        case 0x400301: //Poll request with rumble
-          return 3;
+        case GamecubeCommand::CONSOLE_PROBE:
+        case GamecubeCommand::ORIGIN_PROBE:
+        case GamecubeCommand::POLL_NO_RUMBLE:
+        case GamecubeCommand::POLL_WITH_RUMBLE:
+          return static_cast<GamecubeCommand>(ReadingBuffer);
+
         default:
           break;
       }
     }
     ReadingBuffer <<= 1;
   }
-  //It should never return 255 unless a reading error occured
-  return ReadingBuffer;
+
+  return GamecubeCommand::ERROR;
 }
 
 
-void sendBit(uint8_t output) {
+void gamecubeSendBit(uint8_t output) {
   //BEGIN BY SETTING THE PIN LOW
   ARM_CYCLE_COUNT = 0;
   if (output == 0) { //SEND A 0
@@ -220,20 +244,20 @@ void sendBit(uint8_t output) {
   }
 }
 
-void sendData(volatile uint8_t* sendingBuffer, uint8_t bytesToSend) {
+void gamecubeSendData(volatile const uint8_t* sendingBuffer, uint8_t bytesToSend) {
   detachInterrupt(digitalPinToInterrupt(8));
   pinMode(8, OUTPUT);
   //Read the frontmost bit of the byte, then shift the byte to the left by one, after 8 shifts move to the next byte;
   for (int bytes = 0; bytes < bytesToSend; bytes++) {
     uint8_t byteToSend = *sendingBuffer;
     for (int bits = 0; bits < 8; bits++) {
-      sendBit(byteToSend & 0b10000000);
+      gamecubeSendBit(byteToSend & 0b10000000);
       byteToSend = byteToSend << 1;
     }
-    sendingBuffer += 1;
+    sendingBuffer++;
   }
   //send stop bit
-  sendBit(2);
+  gamecubeSendBit(2);
   pinMode(8, INPUT_PULLUP);
   attachInterrupt(digitalPinToInterrupt(8), dataISR, FALLING);
 }

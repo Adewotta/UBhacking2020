@@ -1,7 +1,7 @@
 #define ARM_CYCLE_COUNT (*(uint32_t*)0xE0001004)
 constexpr int SIXTY_FOUR_MICROSECONDS = 15360;
 
-uint8_t sendBuffer[10];
+uint8_t sendBuffer[10] = { 0, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0, 0 };
 /*
  * Interrupt Service Routine for reading data
  * When the voltage falls, it indicated that a message is being sent

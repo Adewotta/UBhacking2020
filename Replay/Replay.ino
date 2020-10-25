@@ -14,7 +14,7 @@ void swapSendBuffers()
   tempSendBuffer = oldReady;
 }
 
-const uint8_t probeResponse[3] = { 0x09, 0x00, 0x03};
+uint8_t probeResponse[3] = { 0x09, 0x00, 0x03};
 volatile bool polled = false;
 
 enum SerialCommand : uint8_t
@@ -81,7 +81,7 @@ void setup() {
 
 void loop() {
   if (polled) {
-    detachInterrupt(digitalPinToInterrupt(8));
+//    detachInterrupt(digitalPinToInterrupt(8));
 
     polled = false;
 
@@ -91,9 +91,22 @@ void loop() {
     if (Serial.readBytes((char*)tempSendBuffer, 8) == 8)
     {
       swapSendBuffers();
+
+/*
+      serialLog("Buffer begin:");
+      for (int i = 0; i < 8; i++)
+      {
+        serialLog(readySendBuffer[i]);
+      }
+      serialLog("Buffer end:");
+      */
     }
 
-    attachInterrupt(digitalPinToInterrupt(8), dataISR, FALLING);
+    //attachInterrupt(digitalPinToInterrupt(8), dataISR, FALLING);
+  }
+  else
+  {
+    serialLog("polled is false");
   }
 }
 

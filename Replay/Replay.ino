@@ -48,18 +48,11 @@ void setup() {
 }
 
 void loop() {
-  int counter = 0;
-  if(polled==true){
-    polled=false;
-  
-    while(true){
-      Serial.print(counter);
-      if (Serial.available() >= 0) {
-        counter++;
-        sendBuffer[counter]=Serial.read();
-      }
-      if(counter==8)break;
-    }
+  if (polled) {
+    polled = false;
+
+    Serial.write(0);
+    Serial.readBytes(sendBuffer, 8);
   }
 }
 
